@@ -11,11 +11,12 @@
 
 * Import the mysql_structure.sql to the workbench
 * Python3 -m pip install -r requirement.txt
-* Fill the following variables at the client.py file:
+* Define the following environment variables:
   * MYSQL_IP
   * MYSQL_USER
   * MYSQL_PASS
-  * MYSQL_SCHEMA
+  * GEOCODING_API_KEY
+  * HOLIDAY_API_KEY
 * Run python3 client.py
 
 # Project Organization
