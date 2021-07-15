@@ -13,10 +13,12 @@ import json
 import logging
 import hashlib
 import requests
+import threading
 from typing import Union
 from datetime import datetime, timedelta
 from flask import Flask, request
 from wrappers.db_wrapper import DBWrapper
+from wrappers.requets_wrapper import RequestWrapper
 
 """
 Please fill the MySQL credentials!
@@ -43,9 +45,8 @@ MYSQL_SCHEMA = 'dropit_exercise'
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)-10s | %(message)s', stream=sys.stdout)
 app = Flask(__name__)
-
 db_obj = DBWrapper(host=MYSQL_IP, mysql_user=MYSQL_USER, mysql_pass=MYSQL_PASS, database=MYSQL_SCHEMA)
-
+threadLock = threading.Lock()
 
 ##### Admin Endpoints #####
 
@@ -106,12 +107,19 @@ def upload_new_timeslots():
                 'city': timeslot['city']
             }
 
-            if datetime.strptime(timeslot['end_time'], "%Y-%m-%d %H:%M:%S") <= datetime.strptime(timeslot['start_time'], "%Y-%m-%d %H:%M:%S"):
+            start_time_dt = datetime.strptime(timeslot['start_time'], "%Y-%m-%d %H:%M:%S")
+            end_time_dt = datetime.strptime(timeslot['end_time'], "%Y-%m-%d %H:%M:%S")
+            if end_time_dt <= start_time_dt:
                 insert_statuses.append(False)
                 bad_timeslots.append(f"'{timeslot}' - The end time is before the start time.\n")
                 continue
 
-            # TODO: Holiday check https://holidayapi.com/docs
+            holidays = get_holidays()
+            for holiday in holidays:
+                if start_time_dt.strftime("%Y-%m-%d") == holiday['date']:
+                    insert_statuses.append(False)
+                    bad_timeslots.append(f"'{timeslot}' - This timeslot is fall on a holiday.\n")
+                    continue
 
             current_insert_status = db_obj.insert_row(table_name='timeslots', keys_values=current_row)
             if not current_insert_status:
@@ -125,6 +133,7 @@ def upload_new_timeslots():
             return f"One or more timeslots wasn't inserted:\n{''.join([bad_timeslot for bad_timeslot in bad_timeslots])}"
     else:
         return "The provided user admin is invalid.", 400
+
 
 ######################
 
@@ -159,6 +168,27 @@ def get_geocoding_object(address: str) -> Union[dict, None]:
         logging.error(f"There was an issue with sending GET GeoCoding request by the address - '{address}' | Error -'{e}'")
 
     return parsed_response
+
+
+def get_holidays() -> Union[dict, None]:
+    defined_url = f"https://holidayapi.com/v1/holidays"
+    # Free accounts are limited to last year's historical data only, so i wrote "-1" to the year key but for payed account we should remove it.
+    params = {
+        'country': 'IL',
+        'year': datetime.now().year - 1,
+        'key': HOLIDAY_API_KEY
+    }
+
+    rw_obj = RequestWrapper()
+    response = rw_obj.perform_request(method='GET', url=defined_url, params=params)
+
+    if hasattr(response, 'parsed_response'):
+        parsed_response = response.parsed_response
+        if parsed_response['status'] == 200:
+            holidays = parsed_response['holidays']
+            return holidays
+
+    return None
 
 
 @app.route('/resolve-address', methods=['POST'])
@@ -203,8 +233,6 @@ def get_timeslots():
 
 @app.route('/deliveries', methods=['POST'])
 def book_a_delivery():
-    # TODO: Synchronize the code
-
     payload = verify_json_structure(['timeslotId', 'user'])
     if isinstance(payload, tuple):
         return payload
@@ -229,7 +257,11 @@ def book_a_delivery():
     if number_of_delivery_by_day >= 10:
         return f"The number of the deliveries at this date ({current_date}) reached the maximum (10 deliveries).", 500
 
+    # The threadLock handles the concurrent requests.
+    threadLock.acquire()
     insert_new_delivery_status = db_obj.insert_row(table_name='deliveries', keys_values={'user': payload['user'], 'timeslot_id': payload['timeslotId']})
+    threadLock.release()
+
     if not insert_new_delivery_status:
         return "Didn't manage to book new delivery, INTERNAL ERROR. ask devs.", 500
 
@@ -272,9 +304,9 @@ def get_daily():
             matched_deliveries.append(delivery)
 
     if matched_deliveries:
-        return "\n".join(json.dumps(item, indent=4, sort_keys=True, default=str) for item in matched_deliveries), 302
+        return json.dumps(matched_deliveries, indent=4, sort_keys=True, default=str), 302
 
-    return "There are not deliveries today yet."
+    return "There are not deliveries today yet.", 404
 
 
 def get_dates_by_week_number() -> list:
@@ -309,9 +341,9 @@ def get_weekly():
                 matched_deliveries.append(delivery)
 
     if matched_deliveries:
-        return "\n".join(json.dumps(item, indent=4, sort_keys=True, default=str) for item in matched_deliveries), 302
+        return json.dumps(matched_deliveries, indent=4, sort_keys=True, default=str), 302
 
-    return "There are not deliveries this week yet."
+    return "There are not deliveries this week yet.", 404
 
 
 def main(*args, **kwargs) -> int:
