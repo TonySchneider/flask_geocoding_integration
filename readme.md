@@ -1,5 +1,9 @@
 # Flask & Geocoding Integration
 
+Flask Geocoding Integration is a Python web application created by Tony Schneider that provides an interface for geocoding addresses using the Google Maps API. The application is built using the Flask microframework and includes a user interface that allows users to input an address and receive the corresponding latitude and longitude coordinates.
+
+The application utilizes the Google Maps Geocoding API to retrieve the coordinates for a given address. The API key is required for usage and can be obtained from the Google Cloud Console. The application includes error handling for invalid or incomplete addresses and can handle multiple address formats.
+
 ## Requirements
 
 * Python Version >= 3.7.4
